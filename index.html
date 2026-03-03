@@ -7,56 +7,39 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@300;400;500;700&family=Lora:wght@400;600&display=swap" rel="stylesheet">
 
-<!-- ★ Firebase SDK ★ -->
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
-         signOut, onAuthStateChanged, updateProfile }
-  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, doc, setDoc, getDoc, getDocs,
-         deleteDoc, query, orderBy, onSnapshot, serverTimestamp }
-  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+<!-- Supabase SDK (国内可直连) -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 
-/* ════════════════════════════════════════════════════════
-   ★ 第一步：把你的 Firebase 配置粘贴到下面 ★
-   （教程里会告诉你去哪里复制这段内容）
-════════════════════════════════════════════════════════ */
-const firebaseConfig = {
-  apiKey:            "AIzaSyAG6SNGCtAzmSNoID79cysQkvNt609NKH4",
-  authDomain:        "qingriji.firebaseapp.com",
-  projectId:         "qingriji",
-  storageBucket:     "qingriji.firebasestorage.app",
-  messagingSenderId: "195522957444",
-  appId:             "1:195522957444:web:0d345a09e110512969b2d1",
-  measurementId: "G-9KXB1HBLB9"
-};
-/* ════════════════════════════════════════════════════════ */
+<script>
+/* ══════════════════════════════════════════════
+   ★ 第一步：把你的 Supabase 配置填到这里 ★
+   （教程会告诉你去哪里复制这两个值）
+══════════════════════════════════════════════ */
+const SUPABASE_URL = 'https://otjolumveyqiqzcxqkpo.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im90am9sdW12ZXlxaXF6Y3hxa3BvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1MzkwNTgsImV4cCI6MjA4ODExNTA1OH0.0borNpFvjP4IpVWFPenVTVqlgh9L4ZFLrsEpcLjB4L8';
+/* ══════════════════════════════════════════════ */
 
-// 检查是否已填写配置
-const CONFIG_FILLED = !firebaseConfig.apiKey.includes('请填写');
+const CONFIG_OK = !SUPABASE_URL.includes('请填写');
 
-let app, auth, db;
-if (CONFIG_FILLED) {
-  app  = initializeApp(firebaseConfig);
-  auth = getAuth(app);
-  db   = getFirestore(app);
+let sb = null;
+if (CONFIG_OK) {
+  sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 }
 
 /* ── 全局状态 ── */
-let currentUser = null;
-let entries     = {};   // 本地缓存
-let currentId   = null;
-let unsubscribe = null; // Firestore 实时监听取消函数
-let asTimer     = null;
+let CU   = null;   // 当前用户对象
+let entries = {};  // 本地缓存 {id: entry}
+let CID  = null;   // 当前编辑的日记 id
+let asTimer = null;
 let CY, CM;
 
 const WD   = ['日','一','二','三','四','五','六'];
 const MONS = ['一月','二月','三月','四月','五月','六月',
               '七月','八月','九月','十月','十一月','十二月'];
 
-/* ════════════════════════════════════════════════════════
+/* ══════════════════════════════════════════════
    页面切换
-════════════════════════════════════════════════════════ */
+══════════════════════════════════════════════ */
 function showPage(id) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active','visible'));
   const pg = document.getElementById(id);
@@ -64,908 +47,628 @@ function showPage(id) {
   requestAnimationFrame(() => requestAnimationFrame(() => pg.classList.add('visible')));
 }
 
-/* ════════════════════════════════════════════════════════
-   配置检查页
-════════════════════════════════════════════════════════ */
-function showConfigPage() {
-  showPage('configPage');
-}
-
-/* ════════════════════════════════════════════════════════
-   AUTH — 登录 / 注册
-════════════════════════════════════════════════════════ */
-window.switchTab = function(t) {
+/* ══════════════════════════════════════════════
+   AUTH — 注册 / 登录 / 登出
+══════════════════════════════════════════════ */
+window.switchTab = t => {
   document.querySelectorAll('.auth-tab').forEach((el,i) =>
-    el.classList.toggle('on', (i===0) === (t==='login')));
-  document.getElementById('fLogin').style.display = t==='login' ? '' : 'none';
-  document.getElementById('fReg').style.display   = t==='register' ? '' : 'none';
-  clearAuthMsg();
-}
+    el.classList.toggle('on', (i===0)===(t==='login')));
+  document.getElementById('fLogin').style.display  = t==='login' ? '' : 'none';
+  document.getElementById('fReg').style.display    = t==='register' ? '' : 'none';
+  clearMsg();
+};
 
-function showAuthMsg(txt, type='err') {
+function showMsg(txt, type='err') {
   const el = document.getElementById('authMsg');
   el.className = 'auth-msg ' + type;
-  el.innerHTML = (type==='err' ? '⚠️ ' : '✅ ') + txt;
+  el.innerHTML = (type==='err'?'⚠️ ':'✅ ') + txt;
 }
-function clearAuthMsg() {
-  document.getElementById('authMsg').className = 'auth-msg';
-}
+function clearMsg() { document.getElementById('authMsg').className = 'auth-msg'; }
 
-window.eyeToggle = function(id, btn) {
+window.eyeToggle = (id, btn) => {
   const inp = document.getElementById(id);
-  inp.type = inp.type === 'password' ? 'text' : 'password';
-  btn.textContent = inp.type === 'password' ? '👁' : '🙈';
-}
+  inp.type = inp.type==='password' ? 'text' : 'password';
+  btn.textContent = inp.type==='password' ? '👁' : '🙈';
+};
 
-window.pwStrength = function(pw) {
+window.pwStrength = pw => {
   const el = document.getElementById('pwBar');
   let s = 0;
-  if (pw.length >= 6) s++;
-  if (pw.length >= 10) s++;
+  if (pw.length>=6) s++;
+  if (pw.length>=10) s++;
   if (/[A-Z0-9]/.test(pw)) s++;
   if (/[^A-Za-z0-9]/.test(pw)) s++;
-  el.className = 'pw-bar' + (pw ? ' s'+s : '');
-}
+  el.className = 'pw-bar' + (pw?' s'+s:'');
+};
 
-window.doRegister = async function() {
+/* ── 注册 ── */
+window.doRegister = async () => {
   const nick  = document.getElementById('rNick').value.trim();
   const email = document.getElementById('rEmail').value.trim();
   const pw    = document.getElementById('rPw').value;
   const pw2   = document.getElementById('rPw2').value;
-  if (!nick)  return showAuthMsg('请输入昵称');
-  if (!email) return showAuthMsg('请输入邮箱');
-  if (pw.length < 6) return showAuthMsg('密码至少6位');
-  if (pw !== pw2)    return showAuthMsg('两次密码不一致');
+  if (!nick)        return showMsg('请输入昵称');
+  if (!email)       return showMsg('请输入邮箱');
+  if (pw.length<6)  return showMsg('密码至少6位');
+  if (pw !== pw2)   return showMsg('两次密码不一致');
 
   const btn = document.getElementById('btnReg');
-  btn.textContent = '注册中…'; btn.classList.add('busy');
-  try {
-    const cred = await createUserWithEmailAndPassword(auth, email, pw);
-    await updateProfile(cred.user, { displayName: nick });
-    showAuthMsg('注册成功！', 'ok');
-  } catch(e) {
-    btn.textContent = '创建账号'; btn.classList.remove('busy');
-    const msg = {
-      'auth/email-already-in-use': '该邮箱已被注册',
-      'auth/invalid-email':        '邮箱格式不正确',
-      'auth/weak-password':        '密码强度不够，请用更复杂的密码',
-    }[e.code] || ('注册失败：' + e.message);
-    showAuthMsg(msg);
-  }
-}
+  btn.textContent='注册中…'; btn.classList.add('busy');
 
-window.doLogin = async function() {
+  const { data, error } = await sb.auth.signUp({
+    email, password: pw,
+    options: { data: { display_name: nick } }
+  });
+
+  if (error) {
+    btn.textContent='创建账号'; btn.classList.remove('busy');
+    const msgs = {
+      'User already registered': '该邮箱已被注册，请直接登录',
+      'Invalid email': '邮箱格式不正确',
+      'Password should be at least 6 characters': '密码至少需要6位',
+    };
+    return showMsg(msgs[error.message] || '注册失败：' + error.message);
+  }
+
+  // Supabase 默认需要邮件验证，我们在控制台关掉它后直接登录
+  if (data.session) {
+    // 已有 session，直接进入
+    btn.textContent='创建账号'; btn.classList.remove('busy');
+  } else {
+    // 需要验证邮件（说明没关掉邮件验证）
+    showMsg('注册成功！请检查邮箱，点击验证链接后再登录。', 'ok');
+    btn.textContent='创建账号'; btn.classList.remove('busy');
+  }
+};
+
+/* ── 登录 ── */
+window.doLogin = async () => {
   const email = document.getElementById('lEmail').value.trim();
   const pw    = document.getElementById('lPw').value;
-  if (!email) return showAuthMsg('请输入邮箱');
-  if (!pw)    return showAuthMsg('请输入密码');
+  if (!email) return showMsg('请输入邮箱');
+  if (!pw)    return showMsg('请输入密码');
 
   const btn = document.getElementById('btnLogin');
-  btn.textContent = '登录中…'; btn.classList.add('busy');
-  try {
-    await signInWithEmailAndPassword(auth, email, pw);
-    // onAuthStateChanged 会自动触发 enterApp
-  } catch(e) {
-    btn.textContent = '登 录'; btn.classList.remove('busy');
-    const msg = {
-      'auth/user-not-found':   '该邮箱尚未注册',
-      'auth/wrong-password':   '密码错误',
-      'auth/invalid-email':    '邮箱格式不正确',
-      'auth/too-many-requests':'尝试次数过多，请稍后再试',
-      'auth/invalid-credential': '邮箱或密码错误',
-    }[e.code] || ('登录失败：' + e.message);
-    showAuthMsg(msg);
+  btn.textContent='登录中…'; btn.classList.add('busy');
+
+  const { error } = await sb.auth.signInWithPassword({ email, password: pw });
+
+  btn.textContent='登 录'; btn.classList.remove('busy');
+  if (error) {
+    const msgs = {
+      'Invalid login credentials': '邮箱或密码错误',
+      'Email not confirmed': '邮箱未验证，请先查收验证邮件',
+      'Too many requests': '尝试次数过多，请稍后再试',
+    };
+    return showMsg(msgs[error.message] || '登录失败：' + error.message);
   }
-}
+  // onAuthStateChange 会自动触发 enterApp
+};
 
-window.doLogout = async function() {
+/* ── 登出 ── */
+window.doLogout = async () => {
   if (!confirm('确认退出登录？')) return;
-  if (unsubscribe) { unsubscribe(); unsubscribe = null; }
-  await signOut(auth);
-  currentUser = null; entries = {}; currentId = null;
-  document.getElementById('edV').style.display = 'none';
-  document.getElementById('welcomeV').style.display = '';
+  await sb.auth.signOut();
+  CU=null; entries={}; CID=null;
+  document.getElementById('edV').style.display='none';
+  document.getElementById('welcomeV').style.display='';
+  document.getElementById('tbR').innerHTML='<button class="tbtn" onclick="openSearch()">🔍 搜索</button>';
   showPage('authPage');
-  document.getElementById('lEmail').value = '';
-  document.getElementById('lPw').value = '';
-  document.getElementById('btnLogin').textContent = '登 录';
-  document.getElementById('btnLogin').classList.remove('busy');
-  clearAuthMsg(); switchTab('login');
-}
+  document.getElementById('lEmail').value='';
+  document.getElementById('lPw').value='';
+  clearMsg(); switchTab('login');
+};
 
-/* ════════════════════════════════════════════════════════
-   FIRESTORE — 实时同步
-════════════════════════════════════════════════════════ */
-function startSync(uid) {
-  // 取消之前的监听
-  if (unsubscribe) unsubscribe();
-
-  const colRef = collection(db, 'users', uid, 'entries');
-  const q = query(colRef, orderBy('date', 'desc'));
-
-  unsubscribe = onSnapshot(q, (snap) => {
-    entries = {};
-    snap.forEach(doc => { entries[doc.id] = { id: doc.id, ...doc.data() }; });
-    renderList();
-    renderCal();
-    updateStats();
-    // 如果当前打开的日记被删了，回到欢迎页
-    if (currentId && !entries[currentId]) {
-      currentId = null;
-      document.getElementById('edV').style.display = 'none';
-      document.getElementById('welcomeV').style.display = '';
-    }
-  }, (err) => {
-    console.error('Firestore sync error:', err);
-    showToast('同步出错，请检查网络');
-  });
+/* ══════════════════════════════════════════════
+   SUPABASE — 数据读写
+══════════════════════════════════════════════ */
+async function loadAllEntries() {
+  const { data, error } = await sb
+    .from('entries')
+    .select('*')
+    .eq('user_id', CU.id)
+    .order('date', { ascending: false });
+  if (error) { showToast('加载失败，请刷新重试'); return; }
+  entries = {};
+  (data || []).forEach(row => { entries[row.id] = row; });
+  renderList(); renderCal(); updateStats();
+  // 自动打开最新一篇
+  const sorted = Object.values(entries).sort((a,b)=>b.updated_at?.localeCompare(a.updated_at));
+  if (sorted.length) openEntry(sorted[0].id);
 }
 
 async function saveEntryCloud(entry) {
-  if (!currentUser) return;
-  const { id, ...data } = entry;
-  data.updatedAt = serverTimestamp();
-  await setDoc(doc(db, 'users', currentUser.uid, 'entries', id), data);
+  const payload = {
+    id:        entry.id,
+    user_id:   CU.id,
+    date:      entry.date,
+    title:     entry.title   || '',
+    content:   entry.content || '',
+    mood:      entry.mood    || '',
+    weather:   entry.weather || '',
+    tags:      entry.tags    || [],
+    updated_at: new Date().toISOString(),
+  };
+  const { error } = await sb.from('entries').upsert(payload, { onConflict: 'id' });
+  if (error) throw error;
 }
 
 async function deleteEntryCloud(id) {
-  if (!currentUser) return;
-  await deleteDoc(doc(db, 'users', currentUser.uid, 'entries', id));
+  const { error } = await sb.from('entries').delete().eq('id', id).eq('user_id', CU.id);
+  if (error) throw error;
 }
 
-/* ════════════════════════════════════════════════════════
+/* ══════════════════════════════════════════════
    进入 APP
-════════════════════════════════════════════════════════ */
+══════════════════════════════════════════════ */
 function enterApp(user) {
-  currentUser = user;
-  const nick = user.displayName || user.email.split('@')[0];
+  CU = user;
+  const nick = user.user_metadata?.display_name || user.email.split('@')[0];
   document.getElementById('uAva').textContent  = nick[0].toUpperCase();
   document.getElementById('uName').textContent = nick;
   updateTbDate();
   showPage('appPage');
   initCal();
-  startSync(user.uid);   // 开始实时同步
-  showToast('☁️ 已同步云端数据');
+  loadAllEntries();
+  showToast('☁️ 正在同步云端数据…');
 }
 
-/* ════════════════════════════════════════════════════════
-   AUTH STATE LISTENER（核心：监听登录状态）
-════════════════════════════════════════════════════════ */
-if (CONFIG_FILLED) {
-  onAuthStateChanged(auth, (user) => {
-    if (user) {
-      enterApp(user);
+/* ══════════════════════════════════════════════
+   AUTH STATE 监听（核心：自动判断是否已登录）
+══════════════════════════════════════════════ */
+if (CONFIG_OK) {
+  sb.auth.onAuthStateChange((event, session) => {
+    if (session?.user) {
+      enterApp(session.user);
     } else {
       showPage('authPage');
-      setTimeout(() => {
-        try { document.getElementById('lEmail').focus(); } catch(e) {}
-      }, 400);
+      setTimeout(() => { try { document.getElementById('lEmail').focus(); } catch(e){} }, 400);
     }
   });
 } else {
-  showConfigPage();
+  showPage('configPage');
 }
 
-/* ════════════════════════════════════════════════════════
+/* ══════════════════════════════════════════════
    日历
-════════════════════════════════════════════════════════ */
-function initCal() {
-  const n = new Date(); CY = n.getFullYear(); CM = n.getMonth();
-  renderCal();
-}
-window.calPrev = function() { if(--CM < 0){CM=11;CY--;} renderCal(); }
-window.calNext = function() { if(++CM > 11){CM=0;CY++;} renderCal(); }
+══════════════════════════════════════════════ */
+function initCal() { const n=new Date();CY=n.getFullYear();CM=n.getMonth();renderCal(); }
+window.calPrev = () => { if(--CM<0){CM=11;CY--;}renderCal(); };
+window.calNext = () => { if(++CM>11){CM=0;CY++;}renderCal(); };
 
 function renderCal() {
   document.getElementById('calLbl').textContent = `${CY}年${MONS[CM]}`;
-  const g = document.getElementById('calGrid');
-  g.innerHTML = '';
-  WD.forEach(w => {
-    const e = document.createElement('div');
-    e.className = 'cdn'; e.textContent = w; g.appendChild(e);
-  });
-  const first = new Date(CY, CM, 1).getDay();
-  const days  = new Date(CY, CM+1, 0).getDate();
-  const today = todayStr();
-  const dated = new Set(Object.values(entries).map(e => e.date));
-  for (let i=0; i<first; i++) {
-    const e = document.createElement('div');
-    e.className = 'cd emp'; e.textContent = '.'; g.appendChild(e);
-  }
-  for (let d=1; d<=days; d++) {
-    const ds = `${CY}-${String(CM+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-    const el = document.createElement('div');
-    el.className = 'cd'; el.textContent = d;
-    if (ds === today) el.classList.add('today');
-    if (dated.has(ds)) el.classList.add('dot');
-    if (currentId && entries[currentId] && entries[currentId].date === ds) el.classList.add('sel');
-    el.onclick = () => { openDateEntry(ds); sidebarClose(); };
+  const g = document.getElementById('calGrid'); g.innerHTML='';
+  WD.forEach(w => { const e=document.createElement('div');e.className='cdn';e.textContent=w;g.appendChild(e); });
+  const first=new Date(CY,CM,1).getDay(), days=new Date(CY,CM+1,0).getDate();
+  const today=todayStr(), dated=new Set(Object.values(entries).map(e=>e.date));
+  for(let i=0;i<first;i++){const e=document.createElement('div');e.className='cd emp';e.textContent='.';g.appendChild(e);}
+  for(let d=1;d<=days;d++){
+    const ds=`${CY}-${String(CM+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const el=document.createElement('div');el.className='cd';el.textContent=d;
+    if(ds===today)el.classList.add('today');
+    if(dated.has(ds))el.classList.add('dot');
+    if(CID&&entries[CID]?.date===ds)el.classList.add('sel');
+    el.onclick=()=>{openDateEntry(ds);sidebarClose();};
     g.appendChild(el);
   }
 }
+function openDateEntry(ds){const f=Object.values(entries).find(e=>e.date===ds);if(f)openEntry(f.id);else newEntry(ds);}
 
-function openDateEntry(ds) {
-  const f = Object.values(entries).find(e => e.date === ds);
-  if (f) openEntry(f.id); else newEntry(ds);
-}
-
-/* ════════════════════════════════════════════════════════
+/* ══════════════════════════════════════════════
    日记列表
-════════════════════════════════════════════════════════ */
+══════════════════════════════════════════════ */
 function renderList() {
-  const el = document.getElementById('eList');
-  const sorted = Object.values(entries).sort((a,b) => b.date.localeCompare(a.date));
-  if (!sorted.length) {
-    el.innerHTML = '<div class="elist-empty"><div class="ei">🌸</div><p>还没有日记<br>点击「新建日记」<br>开始记录今天</p></div>';
-    return;
-  }
-  const groups = {};
-  sorted.forEach(e => { const k=e.date.slice(0,7); (groups[k]=groups[k]||[]).push(e); });
-  el.innerHTML = '';
-  Object.entries(groups).sort((a,b) => b[0].localeCompare(a[0])).forEach(([k,items]) => {
-    const [y,m] = k.split('-');
-    const gl = document.createElement('div');
-    gl.className = 'eg';
-    gl.textContent = `${y}年 ${MONS[parseInt(m)-1]}`;
-    el.appendChild(gl);
-    items.forEach(e => {
-      const row = document.createElement('div');
-      row.className = 'erow' + (e.id === currentId ? ' on' : '');
-      const dobj = d2o(e.date);
-      row.innerHTML = `
+  const el=document.getElementById('eList');
+  const sorted=Object.values(entries).sort((a,b)=>b.date.localeCompare(a.date));
+  if(!sorted.length){el.innerHTML='<div class="elist-empty"><div class="ei">🌸</div><p>还没有日记<br>点击「新建日记」<br>开始记录今天</p></div>';return;}
+  const groups={};
+  sorted.forEach(e=>{const k=e.date.slice(0,7);(groups[k]=groups[k]||[]).push(e);});
+  el.innerHTML='';
+  Object.entries(groups).sort((a,b)=>b[0].localeCompare(a[0])).forEach(([k,items])=>{
+    const [y,m]=k.split('-');
+    const gl=document.createElement('div');gl.className='eg';
+    gl.textContent=`${y}年 ${MONS[parseInt(m)-1]}`;el.appendChild(gl);
+    items.forEach(e=>{
+      const row=document.createElement('div');
+      row.className='erow'+(e.id===CID?' on':'');
+      const dobj=d2o(e.date);
+      row.innerHTML=`
         <div class="eday"><div class="ednum">${dobj.getDate()}</div><div class="edwd">${WD[dobj.getDay()]}曜</div></div>
         <div class="emeta">
-          <div class="etitle">${escHtml(e.title||'无标题')}</div>
-          <div class="eprev">${escHtml((e.content||'').replace(/[#*`>~-]/g,'').slice(0,30)||'（空）')}</div>
+          <div class="etitle">${esc(e.title||'无标题')}</div>
+          <div class="eprev">${esc((e.content||'').replace(/[#*`>~-]/g,'').slice(0,30)||'（空）')}</div>
         </div>
-        <div class="emood">${e.mood||''}</div>
-      `;
-      row.onclick = () => { openEntry(e.id); sidebarClose(); };
+        <div class="emood">${e.mood||''}</div>`;
+      row.onclick=()=>{openEntry(e.id);sidebarClose();};
       el.appendChild(row);
     });
   });
 }
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
-function escHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-/* ════════════════════════════════════════════════════════
+/* ══════════════════════════════════════════════
    日记 CRUD
-════════════════════════════════════════════════════════ */
-window.newEntry = function(ds) {
-  const id   = 'e_' + Date.now();
-  const date = ds || todayStr();
-  const entry = { id, date, title:'', content:'', mood:'', weather:'', tags:[], updatedAt: Date.now() };
-  entries[id] = entry;
+══════════════════════════════════════════════ */
+window.newEntry = async (ds) => {
+  const id='e_'+Date.now(), date=ds||todayStr();
+  const entry={id,date,title:'',content:'',mood:'',weather:'',tags:[],updated_at:new Date().toISOString()};
+  entries[id]=entry;
   openEntry(id);
-  saveEntryCloud(entry);  // 立即同步云端
-}
+  renderList(); renderCal();
+  try { await saveEntryCloud(entry); } catch(e) { showToast('新建失败，请检查网络'); }
+};
 
 function openEntry(id) {
-  currentId = id;
-  const e = entries[id];
-  if (!e) return;
-  document.getElementById('welcomeV').style.display = 'none';
-  const ev = document.getElementById('edV'); ev.style.display = 'flex';
-  document.getElementById('edGiant').textContent = d2o(e.date).getDate();
-  document.getElementById('edFull').textContent  = fmtFull(e.date);
-  document.getElementById('edTitle').value  = e.title   || '';
-  document.getElementById('edBody').value   = e.content || '';
-  document.querySelectorAll('.mo').forEach(b  => b.classList.toggle('on', b.dataset.m === e.mood));
-  document.querySelectorAll('.wxb').forEach(b => b.classList.toggle('on', b.dataset.w === e.weather));
-  document.querySelectorAll('#tagsRow .tg').forEach(b =>
-    b.classList.toggle('on', (e.tags||[]).includes(b.dataset.t)));
-  document.getElementById('tbR').innerHTML = `
+  CID=id; const e=entries[id]; if(!e) return;
+  document.getElementById('welcomeV').style.display='none';
+  document.getElementById('edV').style.display='flex';
+  document.getElementById('edGiant').textContent=d2o(e.date).getDate();
+  document.getElementById('edFull').textContent=fmtFull(e.date);
+  document.getElementById('edTitle').value=e.title||'';
+  document.getElementById('edBody').value=e.content||'';
+  document.querySelectorAll('.mo').forEach(b=>b.classList.toggle('on',b.dataset.m===e.mood));
+  document.querySelectorAll('.wxb').forEach(b=>b.classList.toggle('on',b.dataset.w===e.weather));
+  document.querySelectorAll('#tagsRow .tg').forEach(b=>b.classList.toggle('on',(e.tags||[]).includes(b.dataset.t)));
+  document.getElementById('tbR').innerHTML=`
     <button class="tbtn dl" onclick="deleteEntry('${id}')">🗑</button>
     <button class="tbtn" onclick="openSearch()">🔍</button>
-    <button class="tbtn sv" id="svBtn">☁️ 已同步</button>
-  `;
+    <button class="tbtn sv" id="svBtn">☁️ 已同步</button>`;
   updateWC(); renderList(); renderCal();
 }
 
-window.deleteEntry = async function(id) {
-  if (!confirm('确定删除这篇日记？此操作不可恢复。')) return;
-  currentId = null;
-  document.getElementById('edV').style.display = 'none';
-  document.getElementById('welcomeV').style.display = '';
-  document.getElementById('tbR').innerHTML = '<button class="tbtn" onclick="openSearch()">🔍 搜索</button>';
-  delete entries[id];
-  await deleteEntryCloud(id);
-  showToast('已删除');
-}
+window.deleteEntry = async (id) => {
+  if(!confirm('确定删除这篇日记？此操作不可恢复。')) return;
+  delete entries[id]; CID=null;
+  document.getElementById('edV').style.display='none';
+  document.getElementById('welcomeV').style.display='';
+  document.getElementById('tbR').innerHTML='<button class="tbtn" onclick="openSearch()">🔍 搜索</button>';
+  renderList(); renderCal(); updateStats();
+  try { await deleteEntryCloud(id); showToast('已删除'); }
+  catch(e) { showToast('删除失败，请重试'); }
+};
 
-/* ════════════════════════════════════════════════════════
-   字段更新
-════════════════════════════════════════════════════════ */
-window.setMood = function(btn) {
-  if (!currentId) return;
-  document.querySelectorAll('.mo').forEach(b => b.classList.remove('on'));
-  btn.classList.add('on');
-  entries[currentId].mood = btn.dataset.m;
-  scheduleAutoSave();
-}
-window.setWx = function(btn) {
-  if (!currentId) return;
-  document.querySelectorAll('.wxb').forEach(b => b.classList.remove('on'));
-  btn.classList.add('on');
-  entries[currentId].weather = btn.dataset.w;
-  scheduleAutoSave();
-}
-window.toggleTag = function(btn) {
-  if (!currentId) return;
-  btn.classList.toggle('on');
-  const tags = entries[currentId].tags || [];
-  const i = tags.indexOf(btn.dataset.t);
-  if (i >= 0) tags.splice(i,1); else tags.push(btn.dataset.t);
-  entries[currentId].tags = tags;
-  scheduleAutoSave();
-}
-window.addTag = function() {
-  const n = prompt('输入新标签：'); if (!n||!n.trim()) return;
-  const row = document.getElementById('tagsRow');
-  const btn = document.createElement('button');
-  btn.className = 'tg on'; btn.dataset.t = n.trim(); btn.textContent = n.trim();
-  btn.onclick = function(){ toggleTag(this); };
-  row.insertBefore(btn, row.querySelector('.tg-add'));
-  if (currentId) {
-    if (!entries[currentId].tags) entries[currentId].tags = [];
-    entries[currentId].tags.push(n.trim());
-    scheduleAutoSave();
-  }
-}
+/* ── 字段更新 ── */
+window.setMood=(btn)=>{if(!CID)return;document.querySelectorAll('.mo').forEach(b=>b.classList.remove('on'));btn.classList.add('on');entries[CID].mood=btn.dataset.m;scheduleAutoSave();};
+window.setWx=(btn)=>{if(!CID)return;document.querySelectorAll('.wxb').forEach(b=>b.classList.remove('on'));btn.classList.add('on');entries[CID].weather=btn.dataset.w;scheduleAutoSave();};
+window.toggleTag=(btn)=>{if(!CID)return;btn.classList.toggle('on');const tags=entries[CID].tags||[];const i=tags.indexOf(btn.dataset.t);if(i>=0)tags.splice(i,1);else tags.push(btn.dataset.t);entries[CID].tags=tags;scheduleAutoSave();};
+window.addTag=()=>{const n=prompt('输入新标签：');if(!n?.trim())return;const row=document.getElementById('tagsRow');const btn=document.createElement('button');btn.className='tg on';btn.dataset.t=n.trim();btn.textContent=n.trim();btn.onclick=function(){toggleTag(this);};row.insertBefore(btn,row.querySelector('.tg-add'));if(CID){if(!entries[CID].tags)entries[CID].tags=[];entries[CID].tags.push(n.trim());scheduleAutoSave();}};
 
-/* ════════════════════════════════════════════════════════
-   自动保存（防抖 800ms 后上传云端）
-════════════════════════════════════════════════════════ */
+/* ── 自动保存（防抖 800ms 后上传云端）── */
 function scheduleAutoSave() {
-  if (!currentId) return;
-  entries[currentId].title   = document.getElementById('edTitle').value;
-  entries[currentId].content = document.getElementById('edBody').value;
-  entries[currentId].updatedAt = Date.now();
-
+  if(!CID) return;
+  entries[CID].title   = document.getElementById('edTitle').value;
+  entries[CID].content = document.getElementById('edBody').value;
   const btn = document.getElementById('svBtn');
-  if (btn) { btn.textContent = '✏️ 编辑中…'; }
-
+  if(btn) btn.textContent='✏️ 编辑中…';
   clearTimeout(asTimer);
-  asTimer = setTimeout(async () => {
+  asTimer = setTimeout(async()=>{
     try {
-      await saveEntryCloud(entries[currentId]);
-      const b = document.getElementById('svBtn');
-      if (b) { b.textContent = '☁️ 已同步'; }
+      await saveEntryCloud(entries[CID]);
+      const b=document.getElementById('svBtn');
+      if(b) b.textContent='☁️ 已同步';
       updateStats();
     } catch(e) {
-      const b = document.getElementById('svBtn');
-      if (b) { b.textContent = '⚠️ 同步失败'; }
+      const b=document.getElementById('svBtn');
+      if(b) b.textContent='⚠️ 同步失败';
       showToast('保存失败，请检查网络');
     }
   }, 800);
 }
+window.autoSave=()=>{scheduleAutoSave();updateWC();};
 
-window.autoSave = function() {
-  scheduleAutoSave();
-  updateWC();
+/* ── 统计 ── */
+function updateStats(){
+  const all=Object.values(entries);
+  document.getElementById('stN').textContent=all.length;
+  document.getElementById('stW').textContent=all.reduce((s,e)=>s+(e.content||'').length,0);
+  let str=0,t=new Date();
+  for(let i=0;i<365;i++){const d=new Date(t);d.setDate(t.getDate()-i);const ds=d.toISOString().slice(0,10);if(all.some(e=>e.date===ds))str++;else if(i>0)break;}
+  document.getElementById('stS').textContent=str;
 }
+function updateTbDate(){const n=new Date();document.getElementById('tbDate').textContent=`${n.getFullYear()}年${n.getMonth()+1}月${n.getDate()}日 · 周${WD[n.getDay()]}`;}
+function updateWC(){document.getElementById('wcEl').textContent=(document.getElementById('edBody').value||'').length+' 字';}
+const todayStr=()=>new Date().toISOString().slice(0,10);
+const d2o=s=>new Date(s+'T00:00:00');
+const fmtFull=s=>{const d=d2o(s);return `${d.getFullYear()}年${MONS[d.getMonth()]} · 周${WD[d.getDay()]}`;};
 
-/* ════════════════════════════════════════════════════════
-   统计 / 工具函数
-════════════════════════════════════════════════════════ */
-function updateStats() {
-  const all = Object.values(entries);
-  document.getElementById('stN').textContent = all.length;
-  document.getElementById('stW').textContent = all.reduce((s,e) => s+(e.content||'').length, 0);
-  let str=0, t=new Date();
-  for (let i=0;i<365;i++) {
-    const d = new Date(t); d.setDate(t.getDate()-i);
-    const ds = d.toISOString().slice(0,10);
-    if (all.some(e=>e.date===ds)) str++; else if (i>0) break;
-  }
-  document.getElementById('stS').textContent = str;
-}
-function updateTbDate() {
-  const n = new Date();
-  document.getElementById('tbDate').textContent =
-    `${n.getFullYear()}年${n.getMonth()+1}月${n.getDate()}日 · 周${WD[n.getDay()]}`;
-}
-function updateWC() {
-  document.getElementById('wcEl').textContent =
-    (document.getElementById('edBody').value||'').length + ' 字';
-}
-const todayStr = () => new Date().toISOString().slice(0,10);
-const d2o      = s  => new Date(s + 'T00:00:00');
-const fmtFull  = s  => {
-  const d = d2o(s);
-  return `${d.getFullYear()}年${MONS[d.getMonth()]} · 周${WD[d.getDay()]}`;
+/* ── 格式化工具栏 ── */
+window.fw=(b,a)=>{const ta=document.getElementById('edBody'),s=ta.selectionStart,e=ta.selectionEnd;ta.setRangeText(b+ta.value.slice(s,e)+a,s,e,'select');ta.focus();scheduleAutoSave();};
+window.fl=(p)=>{const ta=document.getElementById('edBody'),s=ta.selectionStart,ls=ta.value.lastIndexOf('\n',s-1)+1;ta.setRangeText(p,ls,ls,'end');ta.focus();scheduleAutoSave();};
+window.fsep2=()=>{const ta=document.getElementById('edBody'),s=ta.selectionStart;ta.setRangeText('\n---\n',s,s,'end');ta.focus();scheduleAutoSave();};
+
+/* ── 搜索 ── */
+window.openSearch=()=>{document.getElementById('sOver').classList.add('on');document.getElementById('sQ').value='';document.getElementById('sRes').innerHTML='';setTimeout(()=>document.getElementById('sQ').focus(),80);};
+window.sOverClose=e=>{if(e.target===document.getElementById('sOver'))document.getElementById('sOver').classList.remove('on');};
+window.doSearch=()=>{
+  const q=document.getElementById('sQ').value.toLowerCase(),r=document.getElementById('sRes');
+  if(!q){r.innerHTML='';return;}
+  const hits=Object.values(entries).filter(e=>(e.title||'').toLowerCase().includes(q)||(e.content||'').toLowerCase().includes(q)||(e.tags||[]).some(t=>t.toLowerCase().includes(q))).sort((a,b)=>b.date.localeCompare(a.date));
+  if(!hits.length){r.innerHTML='<div style="text-align:center;padding:18px;font-size:13px;color:var(--muted)">未找到</div>';return;}
+  r.innerHTML=hits.map(e=>`<div class="s-item" onclick="pickS('${e.id}')"><div class="s-item-t">${e.mood||''} ${esc(e.title||'无标题')}</div><div class="s-item-d">${e.date} · ${esc((e.content||'').replace(/[#*`>~-]/g,'').slice(0,40))}</div></div>`).join('');
+};
+window.pickS=id=>{document.getElementById('sOver').classList.remove('on');openEntry(id);};
+
+/* ── 侧栏 / 下拉 ── */
+window.sidebarToggle=()=>{document.getElementById('sidebar').classList.toggle('on');document.getElementById('sbBd').classList.toggle('on');};
+window.sidebarClose=()=>{document.getElementById('sidebar').classList.remove('on');document.getElementById('sbBd').classList.remove('on');};
+window.toggleDrop=e=>{e.stopPropagation();document.getElementById('uDrop').classList.toggle('on');};
+document.addEventListener('click',()=>document.getElementById('uDrop')?.classList.remove('on'));
+
+/* ── 导出 ── */
+window.exportData=()=>{
+  const all=Object.values(entries).sort((a,b)=>b.date.localeCompare(a.date));
+  const nick=CU?.user_metadata?.display_name||CU?.email||'user';
+  const txt=all.map(e=>`═══ ${e.date} ${e.mood||''} ${e.weather||''}\n标题：${e.title||'无标题'}\n标签：${(e.tags||[]).join(', ')||'无'}\n\n${e.content||''}\n`).join('\n\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([txt],{type:'text/plain;charset=utf-8'}));
+  a.download=`晴日记_${nick}_${todayStr()}.txt`;a.click();showToast('日记已导出 📤');
 };
 
-/* ════════════════════════════════════════════════════════
-   格式化工具栏
-════════════════════════════════════════════════════════ */
-window.fw    = function(b,a){ const ta=document.getElementById('edBody'),s=ta.selectionStart,e=ta.selectionEnd;ta.setRangeText(b+ta.value.slice(s,e)+a,s,e,'select');ta.focus();scheduleAutoSave(); }
-window.fl    = function(p)  { const ta=document.getElementById('edBody'),s=ta.selectionStart,ls=ta.value.lastIndexOf('\n',s-1)+1;ta.setRangeText(p,ls,ls,'end');ta.focus();scheduleAutoSave(); }
-window.fsep2 = function()   { const ta=document.getElementById('edBody'),s=ta.selectionStart;ta.setRangeText('\n---\n',s,s,'end');ta.focus();scheduleAutoSave(); }
+/* ── Toast ── */
+window.showToast=m=>{const t=document.getElementById('toast');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),2400);};
 
-/* ════════════════════════════════════════════════════════
-   搜索
-════════════════════════════════════════════════════════ */
-window.openSearch   = function() { document.getElementById('sOver').classList.add('on');document.getElementById('sQ').value='';document.getElementById('sRes').innerHTML='';setTimeout(()=>document.getElementById('sQ').focus(),80); }
-window.sOverClose   = function(e){ if(e.target===document.getElementById('sOver')) document.getElementById('sOver').classList.remove('on'); }
-window.doSearch     = function() {
-  const q=document.getElementById('sQ').value.toLowerCase();
-  const r=document.getElementById('sRes');
-  if(!q){r.innerHTML='';return;}
-  const hits=Object.values(entries).filter(e=>
-    (e.title||'').toLowerCase().includes(q)||
-    (e.content||'').toLowerCase().includes(q)||
-    (e.tags||[]).some(t=>t.toLowerCase().includes(q))
-  ).sort((a,b)=>b.date.localeCompare(a.date));
-  if(!hits.length){r.innerHTML='<div style="text-align:center;padding:18px;font-size:13px;color:var(--muted)">未找到</div>';return;}
-  r.innerHTML=hits.map(e=>`<div class="s-item" onclick="pickS('${e.id}')"><div class="s-item-t">${e.mood||''} ${escHtml(e.title||'无标题')}</div><div class="s-item-d">${e.date} · ${escHtml((e.content||'').replace(/[#*`>~-]/g,'').slice(0,40))}</div></div>`).join('');
-}
-window.pickS = function(id){ document.getElementById('sOver').classList.remove('on');openEntry(id); }
-
-/* ════════════════════════════════════════════════════════
-   侧栏 / 下拉菜单
-════════════════════════════════════════════════════════ */
-window.sidebarToggle = function(){ document.getElementById('sidebar').classList.toggle('on');document.getElementById('sbBd').classList.toggle('on'); }
-window.sidebarClose  = function(){ document.getElementById('sidebar').classList.remove('on');document.getElementById('sbBd').classList.remove('on'); }
-window.toggleDrop    = function(e){ e.stopPropagation();document.getElementById('uDrop').classList.toggle('on'); }
-document.addEventListener('click', () => document.getElementById('uDrop')?.classList.remove('on'));
-
-/* ════════════════════════════════════════════════════════
-   导出
-════════════════════════════════════════════════════════ */
-window.exportData = function() {
-  const all = Object.values(entries).sort((a,b)=>b.date.localeCompare(a.date));
-  const nick = currentUser?.displayName || currentUser?.email || 'user';
-  const txt = all.map(e =>
-    `═══ ${e.date} ${e.mood||''} ${e.weather||''}\n标题：${e.title||'无标题'}\n标签：${(e.tags||[]).join(', ')||'无'}\n\n${e.content||''}\n`
-  ).join('\n\n');
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([txt],{type:'text/plain;charset=utf-8'}));
-  a.download = `晴日记_${nick}_${todayStr()}.txt`; a.click();
-  showToast('日记已导出 📤');
-}
-
-/* ════════════════════════════════════════════════════════
-   Toast
-════════════════════════════════════════════════════════ */
-window.showToast = function(m) {
-  const t = document.getElementById('toast');
-  t.textContent = m; t.classList.add('on');
-  setTimeout(() => t.classList.remove('on'), 2400);
-}
-
-/* ════════════════════════════════════════════════════════
-   快捷键
-════════════════════════════════════════════════════════ */
-document.addEventListener('keydown', e => {
-  if ((e.ctrlKey||e.metaKey) && e.key==='s') { e.preventDefault(); if(currentId) scheduleAutoSave(); }
-  if ((e.ctrlKey||e.metaKey) && e.key==='k') { e.preventDefault(); if(currentUser) openSearch(); }
-  if ((e.ctrlKey||e.metaKey) && e.key==='n') { e.preventDefault(); if(currentUser) newEntry(); }
-  if (e.key==='Escape') {
-    document.getElementById('sOver').classList.remove('on');
-    document.getElementById('uDrop')?.classList.remove('on');
-    sidebarClose();
-  }
+/* ── 快捷键 ── */
+document.addEventListener('keydown',e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();if(CID)scheduleAutoSave();}
+  if((e.ctrlKey||e.metaKey)&&e.key==='k'){e.preventDefault();if(CU)openSearch();}
+  if((e.ctrlKey||e.metaKey)&&e.key==='n'){e.preventDefault();if(CU)newEntry();}
+  if(e.key==='Escape'){document.getElementById('sOver').classList.remove('on');document.getElementById('uDrop')?.classList.remove('on');sidebarClose();}
 });
 
-/* ── Enter 键支持 ── */
-document.getElementById('lPw').addEventListener('keydown',   e => { if(e.key==='Enter') doLogin(); });
-document.getElementById('rPw2').addEventListener('keydown',  e => { if(e.key==='Enter') doRegister(); });
-document.getElementById('lEmail').addEventListener('keydown',e => { if(e.key==='Enter') document.getElementById('lPw').focus(); });
-
+/* ── Enter 键 ── */
+document.getElementById('lPw').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
+document.getElementById('rPw2').addEventListener('keydown',e=>{if(e.key==='Enter')doRegister();});
+document.getElementById('lEmail').addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('lPw').focus();});
 </script>
 
 <style>
-:root {
-  --ink:      #18120a;
-  --paper:    #faf8f3;
-  --paper2:   #f2ece0;
-  --accent:   #bf5b1e;
-  --accent-h: #a34c17;
-  --gold:     #b8963e;
-  --muted:    #8a7d6e;
-  --line:     #ddd3c0;
-  --green:    #3a7c55;
-  --red:      #c0392b;
-  --blue:     #1a56a0;
-  --shadow:   rgba(24,18,10,.12);
-}
-*, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
-html, body { height:100%; }
-body {
-  background:var(--paper); color:var(--ink);
-  font-family:'Noto Serif SC',serif; overflow:hidden;
-  -webkit-font-smoothing:antialiased;
-}
-body::after {
-  content:''; position:fixed; inset:0;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
-  pointer-events:none; z-index:9998;
-}
-button { font-family:inherit; cursor:pointer; }
-input, textarea { font-family:inherit; }
+:root{--ink:#18120a;--paper:#faf8f3;--paper2:#f2ece0;--accent:#bf5b1e;--accent-h:#a34c17;--gold:#b8963e;--muted:#8a7d6e;--line:#ddd3c0;--green:#3a7c55;--red:#c0392b;--blue:#1a56a0;--shadow:rgba(24,18,10,.12);}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;}
+body{background:var(--paper);color:var(--ink);font-family:'Noto Serif SC',serif;overflow:hidden;-webkit-font-smoothing:antialiased;}
+body::after{content:'';position:fixed;inset:0;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");pointer-events:none;z-index:9998;}
+button{font-family:inherit;cursor:pointer;}input,textarea{font-family:inherit;}
 
-/* ── PAGE ── */
-.page { position:fixed;inset:0;display:none;opacity:0;transition:opacity .35s ease; }
-.page.active { display:flex; }
-.page.visible { opacity:1; }
+/* PAGES */
+.page{position:fixed;inset:0;display:none;opacity:0;transition:opacity .35s ease;}
+.page.active{display:flex;}.page.visible{opacity:1;}
 
-/* ════════════════════
-   CONFIG PAGE
-════════════════════ */
-#configPage {
-  flex-direction:column; align-items:center; justify-content:center;
-  background:linear-gradient(135deg,#0f1923 0%,#1a2d40 100%);
-  padding:20px; overflow-y:auto;
-}
-.cfg-card {
-  background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12);
-  border-radius:20px; padding:36px 40px; width:100%; max-width:560px;
-  color:white;
-}
-.cfg-title { font-family:'Ma Shan Zheng',cursive; font-size:32px; color:#f0c040; letter-spacing:4px; margin-bottom:6px; }
-.cfg-sub { font-size:13px; opacity:.65; margin-bottom:28px; letter-spacing:1px; }
-.cfg-step { display:flex;gap:14px;margin-bottom:20px;align-items:flex-start; }
-.cfg-num { width:28px;height:28px;border-radius:50%;background:#f0c040;color:#0f1923;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0;margin-top:2px; }
-.cfg-txt strong { display:block;font-size:14px;margin-bottom:3px; }
-.cfg-txt p { font-size:12px;opacity:.65;line-height:1.6; }
-.cfg-txt code { background:rgba(255,255,255,.1);border-radius:4px;padding:1px 6px;font-family:monospace;font-size:12px;color:#89dceb; }
-.cfg-warn { background:rgba(240,192,64,.1);border:1px solid rgba(240,192,64,.3);border-radius:10px;padding:14px 16px;font-size:13px;color:#f0c040;line-height:1.7;margin-top:20px; }
+/* ── CONFIG PAGE ── */
+#configPage{flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(135deg,#0f2027,#203a43,#2c5364);padding:20px;overflow-y:auto;}
+.cfg-card{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.15);border-radius:22px;padding:36px 40px;width:100%;max-width:520px;color:white;}
+.cfg-logo{font-family:'Ma Shan Zheng',cursive;font-size:36px;color:#7dd3fc;letter-spacing:4px;margin-bottom:4px;}
+.cfg-sub{font-size:13px;opacity:.6;margin-bottom:26px;letter-spacing:.5px;}
+.cfg-step{display:flex;gap:14px;margin-bottom:18px;align-items:flex-start;}
+.cfg-num{width:26px;height:26px;border-radius:50%;background:#7dd3fc;color:#0f2027;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;margin-top:2px;}
+.cfg-txt strong{display:block;font-size:14px;margin-bottom:3px;}
+.cfg-txt p{font-size:12px;opacity:.6;line-height:1.6;}
+.cfg-txt code{background:rgba(255,255,255,.12);border-radius:4px;padding:1px 6px;font-family:monospace;font-size:12px;color:#7dd3fc;}
+.cfg-note{background:rgba(125,211,252,.1);border:1px solid rgba(125,211,252,.3);border-radius:10px;padding:14px 16px;font-size:13px;color:#7dd3fc;line-height:1.7;margin-top:18px;}
 
-/* ════════════════════
-   AUTH PAGE
-════════════════════ */
-#authPage {
-  flex-direction:column; align-items:center; justify-content:center;
-  background:
-    radial-gradient(ellipse 80% 60% at 15% 10%,rgba(191,91,30,.13) 0%,transparent 60%),
-    radial-gradient(ellipse 60% 80% at 85% 90%,rgba(184,150,62,.10) 0%,transparent 60%),
-    var(--paper);
-  padding:20px; overflow-y:auto;
-}
-.auth-brand { text-align:center;margin-bottom:24px;animation:fadeUp .6s ease both;position:relative;z-index:1; }
-.auth-logo { font-family:'Ma Shan Zheng',cursive;font-size:52px;color:var(--accent);line-height:1;text-shadow:0 6px 24px rgba(191,91,30,.2); }
-.auth-tagline { font-size:11px;letter-spacing:4px;color:var(--muted);margin-top:5px;font-weight:300; }
-.auth-deco { width:44px;height:1.5px;background:linear-gradient(90deg,transparent,var(--accent),transparent);margin:9px auto 0; }
-.auth-cloud { font-size:11px;color:var(--blue);background:rgba(26,86,160,.08);border:1px solid rgba(26,86,160,.2);border-radius:20px;padding:3px 12px;margin-top:8px;display:inline-block;letter-spacing:.5px; }
+/* ── AUTH PAGE ── */
+#authPage{flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(ellipse 80% 60% at 15% 10%,rgba(191,91,30,.13) 0%,transparent 60%),radial-gradient(ellipse 60% 80% at 85% 90%,rgba(184,150,62,.10) 0%,transparent 60%),var(--paper);padding:20px;overflow-y:auto;}
+.auth-brand{text-align:center;margin-bottom:24px;animation:fadeUp .6s ease both;position:relative;z-index:1;}
+.auth-logo{font-family:'Ma Shan Zheng',cursive;font-size:52px;color:var(--accent);line-height:1;text-shadow:0 6px 24px rgba(191,91,30,.2);}
+.auth-tagline{font-size:11px;letter-spacing:4px;color:var(--muted);margin-top:5px;font-weight:300;}
+.auth-deco{width:44px;height:1.5px;background:linear-gradient(90deg,transparent,var(--accent),transparent);margin:9px auto 0;}
+.auth-cloud{font-size:11px;color:var(--blue);background:rgba(26,86,160,.08);border:1px solid rgba(26,86,160,.2);border-radius:20px;padding:3px 14px;margin-top:10px;display:inline-block;}
+.auth-card{background:rgba(255,255,255,.78);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border:1px solid rgba(255,255,255,.95);border-radius:24px;padding:32px 36px 24px;width:100%;max-width:420px;box-shadow:0 2px 0 rgba(255,255,255,.9) inset,0 24px 64px var(--shadow);animation:fadeUp .6s .08s ease both;position:relative;z-index:1;}
+.auth-tabs{display:flex;gap:4px;background:var(--paper2);border-radius:10px;padding:4px;margin-bottom:22px;}
+.auth-tab{flex:1;border:none;background:none;border-radius:7px;padding:9px;font-size:14px;color:var(--muted);transition:all .2s;letter-spacing:.5px;}
+.auth-tab.on{background:white;color:var(--ink);box-shadow:0 2px 8px var(--shadow);font-weight:500;}
+.auth-msg{display:none;border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:14px;align-items:center;gap:8px;}
+.auth-msg.err{display:flex;background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;animation:shake .3s ease;}
+.auth-msg.ok{display:flex;background:#f0fdf4;border:1px solid #86efac;color:#166534;}
+.field{margin-bottom:14px;}
+.field label{display:block;font-size:10px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;margin-bottom:5px;}
+.fw{position:relative;}
+.fw .fi{position:absolute;left:13px;top:50%;transform:translateY(-50%);font-size:14px;pointer-events:none;opacity:.4;}
+.field input{width:100%;background:var(--paper);border:1.5px solid var(--line);border-radius:10px;padding:11px 42px 11px 40px;font-size:14px;color:var(--ink);outline:none;transition:border-color .2s,box-shadow .2s;}
+.field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(191,91,30,.11);}
+.field input::placeholder{color:var(--line);}
+.eye-btn{position:absolute;right:11px;top:50%;transform:translateY(-50%);background:none;border:none;font-size:14px;opacity:.35;transition:opacity .2s;padding:4px;}
+.eye-btn:hover{opacity:1;}
+.pw-bar{display:flex;gap:4px;margin-top:5px;height:3px;}
+.pw-bar span{flex:1;border-radius:2px;background:var(--line);transition:background .3s;}
+.pw-bar.s1 span:nth-child(1){background:#ef4444;}.pw-bar.s2 span:nth-child(-n+2){background:#f97316;}.pw-bar.s3 span:nth-child(-n+3){background:#eab308;}.pw-bar.s4 span{background:var(--green);}
+.btn-auth{width:100%;background:var(--accent);color:white;border:none;border-radius:10px;padding:13px;font-size:15px;letter-spacing:1px;font-weight:500;transition:all .2s;margin-top:4px;box-shadow:0 4px 18px rgba(191,91,30,.28);position:relative;overflow:hidden;}
+.btn-auth::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.12) 0%,transparent 50%);pointer-events:none;}
+.btn-auth:hover{background:var(--accent-h);transform:translateY(-1px);}
+.btn-auth:active{transform:translateY(0);}
+.btn-auth.busy{opacity:.7;pointer-events:none;}
+.auth-note{text-align:center;margin-top:16px;font-size:11px;color:var(--muted);line-height:1.8;}
+@keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
 
-.auth-card {
-  background:rgba(255,255,255,.78);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
-  border:1px solid rgba(255,255,255,.95);border-radius:24px;padding:32px 36px 24px;
-  width:100%;max-width:420px;
-  box-shadow:0 2px 0 rgba(255,255,255,.9) inset,0 24px 64px var(--shadow),0 4px 16px rgba(191,91,30,.07);
-  animation:fadeUp .6s .08s ease both;position:relative;z-index:1;
-}
-.auth-tabs { display:flex;gap:4px;background:var(--paper2);border-radius:10px;padding:4px;margin-bottom:22px; }
-.auth-tab { flex:1;border:none;background:none;border-radius:7px;padding:9px;font-size:14px;color:var(--muted);transition:all .2s;letter-spacing:.5px; }
-.auth-tab.on { background:white;color:var(--ink);box-shadow:0 2px 8px var(--shadow);font-weight:500; }
-.auth-msg { display:none;border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:14px;align-items:center;gap:8px; }
-.auth-msg.err { display:flex;background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;animation:shake .3s ease; }
-.auth-msg.ok  { display:flex;background:#f0fdf4;border:1px solid #86efac;color:#166534; }
-.field { margin-bottom:14px; }
-.field label { display:block;font-size:10px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;margin-bottom:5px; }
-.fw { position:relative; }
-.fw .fi { position:absolute;left:13px;top:50%;transform:translateY(-50%);font-size:14px;pointer-events:none;opacity:.4; }
-.field input { width:100%;background:var(--paper);border:1.5px solid var(--line);border-radius:10px;padding:11px 42px 11px 40px;font-size:14px;color:var(--ink);outline:none;transition:border-color .2s,box-shadow .2s; }
-.field input:focus { border-color:var(--accent);box-shadow:0 0 0 3px rgba(191,91,30,.11); }
-.field input::placeholder { color:var(--line); }
-.eye-btn { position:absolute;right:11px;top:50%;transform:translateY(-50%);background:none;border:none;font-size:14px;opacity:.35;transition:opacity .2s;padding:4px; }
-.eye-btn:hover { opacity:1; }
-.pw-bar { display:flex;gap:4px;margin-top:5px;height:3px; }
-.pw-bar span { flex:1;border-radius:2px;background:var(--line);transition:background .3s; }
-.pw-bar.s1 span:nth-child(1){background:#ef4444;}
-.pw-bar.s2 span:nth-child(-n+2){background:#f97316;}
-.pw-bar.s3 span:nth-child(-n+3){background:#eab308;}
-.pw-bar.s4 span{background:var(--green);}
-.btn-auth { width:100%;background:var(--accent);color:white;border:none;border-radius:10px;padding:13px;font-size:15px;letter-spacing:1px;font-weight:500;transition:all .2s;margin-top:4px;box-shadow:0 4px 18px rgba(191,91,30,.28);position:relative;overflow:hidden; }
-.btn-auth::after { content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.12) 0%,transparent 50%);pointer-events:none; }
-.btn-auth:hover { background:var(--accent-h);transform:translateY(-1px);box-shadow:0 6px 22px rgba(191,91,30,.38); }
-.btn-auth:active { transform:translateY(0); }
-.btn-auth.busy { opacity:.7;pointer-events:none; }
-.auth-note { text-align:center;margin-top:16px;font-size:11px;color:var(--muted);line-height:1.8; }
-@keyframes fadeUp { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
-@keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-5px)} 75%{transform:translateX(5px)} }
-
-/* ════════════════════
-   APP PAGE
-════════════════════ */
-#appPage { flex-direction:row;overflow:hidden; }
-
-/* SIDEBAR */
-.sidebar { width:268px;min-width:268px;background:var(--paper2);border-right:1px solid var(--line);display:flex;flex-direction:column;z-index:100;transition:transform .3s ease; }
-.sb-top { padding:18px 16px 13px;border-bottom:1px solid var(--line); }
-.sb-brand-row { display:flex;align-items:center;justify-content:space-between;margin-bottom:11px; }
-.brand-txt { font-family:'Ma Shan Zheng',cursive;font-size:24px;color:var(--accent);letter-spacing:4px;line-height:1; }
-.sync-badge { font-size:10px;color:var(--blue);background:rgba(26,86,160,.1);border:1px solid rgba(26,86,160,.2);border-radius:10px;padding:2px 7px;letter-spacing:.3px; }
-.user-pill { display:flex;align-items:center;gap:7px;background:white;border:1px solid var(--line);border-radius:20px;padding:4px 9px 4px 4px;cursor:pointer;transition:all .2s;position:relative; }
-.user-pill:hover { border-color:var(--accent); }
-.u-ava { width:24px;height:24px;border-radius:50%;background:var(--accent);color:white;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;font-family:'Lora',serif;flex-shrink:0; }
-.u-name { font-size:12px;color:var(--ink);font-weight:500;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-.u-drop { position:absolute;top:calc(100% + 5px);right:0;background:white;border:1px solid var(--line);border-radius:10px;padding:5px;min-width:148px;box-shadow:0 8px 24px var(--shadow);z-index:300;display:none;animation:dropIn .15s ease; }
-.u-drop.on { display:block; }
-.u-drop-item { display:flex;align-items:center;gap:8px;padding:8px 11px;border-radius:6px;font-size:13px;color:var(--ink);cursor:pointer;transition:background .12s; }
-.u-drop-item:hover { background:var(--paper2); }
-.u-drop-item.danger { color:var(--red); }
-.u-drop-item.danger:hover { background:#fef2f2; }
-@keyframes dropIn { from{opacity:0;transform:translateY(-5px)} to{opacity:1;transform:translateY(0)} }
-.btn-new { display:flex;align-items:center;justify-content:center;gap:7px;background:var(--accent);color:white;border:none;border-radius:10px;padding:11px;font-size:14px;letter-spacing:.5px;width:100%;box-shadow:0 3px 10px rgba(191,91,30,.26);transition:all .2s; }
-.btn-new:hover { background:var(--accent-h);transform:translateY(-1px); }
-
-/* Calendar */
-.mini-cal { padding:12px 14px 10px;border-bottom:1px solid var(--line); }
-.cal-hd { display:flex;align-items:center;justify-content:space-between;margin-bottom:8px; }
-.cal-lbl { font-size:12px;font-weight:500;color:var(--ink);letter-spacing:1px; }
-.cal-nav { background:none;border:none;color:var(--muted);font-size:15px;padding:2px 5px;border-radius:4px;transition:color .12s; }
-.cal-nav:hover { color:var(--accent); }
-.cal-grid { display:grid;grid-template-columns:repeat(7,1fr);gap:1px; }
-.cdn { text-align:center;font-size:9px;color:var(--muted);padding:3px 0; }
-.cd { text-align:center;font-size:11px;padding:4px 0;border-radius:4px;cursor:pointer;transition:all .12s;color:var(--ink);position:relative; }
-.cd:hover { background:var(--line); }
-.cd.today { background:var(--accent);color:white;font-weight:600; }
-.cd.dot::after { content:'';position:absolute;bottom:1px;left:50%;transform:translateX(-50%);width:3px;height:3px;border-radius:50%;background:var(--gold); }
-.cd.today.dot::after { background:rgba(255,255,255,.8); }
-.cd.emp { pointer-events:none;color:transparent; }
-.cd.sel { outline:1.5px solid var(--accent);color:var(--accent);background:rgba(191,91,30,.07); }
-
-/* Entry list */
-.elist { flex:1;overflow-y:auto;padding:8px 7px; }
-.elist::-webkit-scrollbar { width:3px; }
-.elist::-webkit-scrollbar-thumb { background:var(--line);border-radius:2px; }
-.eg { font-size:9px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;padding:8px 9px 3px; }
-.erow { display:flex;align-items:flex-start;gap:9px;padding:9px 10px;border-radius:8px;cursor:pointer;transition:all .12s;margin-bottom:1px; }
-.erow:hover { background:rgba(191,91,30,.07); }
-.erow.on { background:rgba(191,91,30,.11);border-left:2px solid var(--accent);padding-left:8px; }
-.eday { min-width:30px;text-align:center; }
-.ednum { font-family:'Lora',serif;font-size:19px;font-weight:700;color:var(--accent);line-height:1; }
-.edwd { font-size:8px;color:var(--muted);letter-spacing:.5px; }
-.emeta { flex:1;min-width:0; }
-.etitle { font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px; }
-.eprev { font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
-.emood { font-size:14px;margin-top:2px; }
-.elist-empty { text-align:center;padding:36px 14px;color:var(--muted); }
-.elist-empty .ei { font-size:38px;opacity:.28;margin-bottom:8px; }
-.elist-empty p { font-size:12px;line-height:1.7; }
-
-/* Main area */
-.main-area { flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden; }
-.mtbar { display:flex;align-items:center;justify-content:space-between;padding:12px 28px;border-bottom:1px solid var(--line);background:var(--paper);flex-shrink:0; }
-.mtbar-l { display:flex;align-items:center;gap:9px; }
-.menu-btn { display:none;background:none;border:none;color:var(--muted);padding:4px; }
-.tb-date { font-size:12px;color:var(--muted);letter-spacing:.5px; }
-.mtbar-r { display:flex;gap:5px; }
-.tbtn { display:flex;align-items:center;gap:5px;background:none;border:1px solid var(--line);border-radius:7px;padding:6px 11px;font-size:12px;color:var(--muted);transition:all .15s; }
-.tbtn:hover { border-color:var(--accent);color:var(--accent); }
-.tbtn.sv { background:var(--blue);border-color:var(--blue);color:white; }
-.tbtn.sv:hover { background:#14489a; }
-.tbtn.dl:hover { border-color:var(--red);color:var(--red); }
-
-/* Editor */
-.ed-scroll { flex:1;overflow-y:auto;padding:38px 52px; }
-.ed-scroll::-webkit-scrollbar { width:5px; }
-.ed-scroll::-webkit-scrollbar-thumb { background:var(--line);border-radius:3px; }
-.ed-inner { max-width:680px;margin:0 auto; }
-.ed-dr { display:flex;align-items:baseline;gap:14px;margin-bottom:6px; }
-.ed-giant { font-family:'Lora',serif;font-size:70px;font-weight:600;color:var(--accent);line-height:1;opacity:.11;user-select:none; }
-.ed-dfull { font-size:13px;color:var(--muted);letter-spacing:2px;font-weight:300; }
-.mood-row { display:flex;align-items:center;gap:6px;margin-bottom:12px;flex-wrap:wrap; }
-.ml { font-size:10px;color:var(--muted);letter-spacing:1px;margin-right:2px; }
-.mo { width:33px;height:33px;border-radius:50%;background:none;border:1.5px solid var(--line);font-size:16px;display:flex;align-items:center;justify-content:center;transition:all .15s; }
-.mo:hover { border-color:var(--accent);transform:scale(1.15); }
-.mo.on { border-color:var(--accent);background:rgba(191,91,30,.09);transform:scale(1.1); }
-.wx-row { display:flex;align-items:center;gap:5px;margin-bottom:10px;flex-wrap:wrap; }
-.wxb { background:none;border:1px solid var(--line);border-radius:15px;padding:3px 9px;font-size:11px;color:var(--muted);transition:all .15s; }
-.wxb:hover { border-color:#3a6080;color:#3a6080; }
-.wxb.on { border-color:#3a6080;background:rgba(58,96,128,.08);color:#3a6080; }
-.tags-row { display:flex;align-items:center;gap:5px;margin-bottom:20px;flex-wrap:wrap; }
-.tg { background:var(--paper2);border:1px solid var(--line);border-radius:15px;padding:3px 10px;font-size:11px;color:var(--muted);transition:all .15s; }
-.tg:hover,.tg.on { background:rgba(191,91,30,.09);border-color:var(--accent);color:var(--accent); }
-.tg-add { background:none;border:1px dashed var(--line);border-radius:15px;padding:3px 9px;font-size:11px;color:var(--muted);transition:all .15s; }
-.tg-add:hover { border-color:var(--accent);color:var(--accent); }
-.ed-title-in { width:100%;border:none;background:transparent;font-family:'Ma Shan Zheng',cursive;font-size:34px;color:var(--ink);outline:none;letter-spacing:3px;line-height:1.3;margin-bottom:16px; }
-.ed-title-in::placeholder { color:var(--line); }
-.ed-div { border:none;border-top:1px solid var(--line);margin:0 0 20px;position:relative; }
-.ed-div::after { content:'❧';position:absolute;left:50%;top:-10px;transform:translateX(-50%);background:var(--paper);padding:0 10px;color:rgba(191,91,30,.22);font-size:14px; }
-.ed-body { width:100%;min-height:280px;border:none;background:transparent;font-family:'Noto Serif SC',serif;font-size:15px;line-height:2.1;color:var(--ink);outline:none;resize:none;font-weight:300;letter-spacing:.3px; }
-.ed-body::placeholder { color:var(--line); }
-.fmtbar { display:flex;align-items:center;gap:3px;padding:9px 28px;border-top:1px solid var(--line);background:var(--paper);flex-shrink:0;flex-wrap:wrap; }
-.fb { background:none;border:none;padding:5px 7px;border-radius:4px;font-size:12px;color:var(--muted);transition:all .12s; }
-.fb:hover { background:var(--line);color:var(--ink); }
-.fsep { width:1px;height:15px;background:var(--line);margin:0 3px; }
-.wc { margin-left:auto;font-size:10px;color:var(--muted); }
-.welcome { flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;text-align:center;color:var(--muted); }
-.welcome .wi { font-size:68px;opacity:.22;margin-bottom:18px;animation:float 4s ease-in-out infinite; }
-.welcome h3 { font-family:'Ma Shan Zheng',cursive;font-size:24px;color:var(--ink);opacity:.32;letter-spacing:4px;margin-bottom:8px; }
-.welcome p { font-size:13px;line-height:1.8;font-weight:300;max-width:250px;opacity:.7; }
+/* ── APP PAGE ── */
+#appPage{flex-direction:row;overflow:hidden;}
+.sidebar{width:268px;min-width:268px;background:var(--paper2);border-right:1px solid var(--line);display:flex;flex-direction:column;z-index:100;transition:transform .3s ease;}
+.sb-top{padding:18px 16px 13px;border-bottom:1px solid var(--line);}
+.sb-brand-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px;}
+.brand-txt{font-family:'Ma Shan Zheng',cursive;font-size:24px;color:var(--accent);letter-spacing:4px;line-height:1;}
+.sync-badge{font-size:10px;color:var(--blue);background:rgba(26,86,160,.1);border:1px solid rgba(26,86,160,.2);border-radius:10px;padding:2px 7px;}
+.user-pill{display:flex;align-items:center;gap:7px;background:white;border:1px solid var(--line);border-radius:20px;padding:4px 9px 4px 4px;cursor:pointer;transition:all .2s;position:relative;}
+.user-pill:hover{border-color:var(--accent);}
+.u-ava{width:24px;height:24px;border-radius:50%;background:var(--accent);color:white;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;font-family:'Lora',serif;flex-shrink:0;}
+.u-name{font-size:12px;color:var(--ink);font-weight:500;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.u-drop{position:absolute;top:calc(100% + 5px);right:0;background:white;border:1px solid var(--line);border-radius:10px;padding:5px;min-width:148px;box-shadow:0 8px 24px var(--shadow);z-index:300;display:none;animation:dropIn .15s ease;}
+.u-drop.on{display:block;}
+.u-drop-item{display:flex;align-items:center;gap:8px;padding:8px 11px;border-radius:6px;font-size:13px;color:var(--ink);cursor:pointer;transition:background .12s;}
+.u-drop-item:hover{background:var(--paper2);}
+.u-drop-item.danger{color:var(--red);}
+.u-drop-item.danger:hover{background:#fef2f2;}
+@keyframes dropIn{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:translateY(0)}}
+.btn-new{display:flex;align-items:center;justify-content:center;gap:7px;background:var(--accent);color:white;border:none;border-radius:10px;padding:11px;font-size:14px;letter-spacing:.5px;width:100%;box-shadow:0 3px 10px rgba(191,91,30,.26);transition:all .2s;}
+.btn-new:hover{background:var(--accent-h);transform:translateY(-1px);}
+.mini-cal{padding:12px 14px 10px;border-bottom:1px solid var(--line);}
+.cal-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+.cal-lbl{font-size:12px;font-weight:500;color:var(--ink);letter-spacing:1px;}
+.cal-nav{background:none;border:none;color:var(--muted);font-size:15px;padding:2px 5px;border-radius:4px;transition:color .12s;}
+.cal-nav:hover{color:var(--accent);}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;}
+.cdn{text-align:center;font-size:9px;color:var(--muted);padding:3px 0;}
+.cd{text-align:center;font-size:11px;padding:4px 0;border-radius:4px;cursor:pointer;transition:all .12s;color:var(--ink);position:relative;}
+.cd:hover{background:var(--line);}
+.cd.today{background:var(--accent);color:white;font-weight:600;}
+.cd.dot::after{content:'';position:absolute;bottom:1px;left:50%;transform:translateX(-50%);width:3px;height:3px;border-radius:50%;background:var(--gold);}
+.cd.today.dot::after{background:rgba(255,255,255,.8);}
+.cd.emp{pointer-events:none;color:transparent;}
+.cd.sel{outline:1.5px solid var(--accent);color:var(--accent);background:rgba(191,91,30,.07);}
+.elist{flex:1;overflow-y:auto;padding:8px 7px;}
+.elist::-webkit-scrollbar{width:3px;}
+.elist::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px;}
+.eg{font-size:9px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;padding:8px 9px 3px;}
+.erow{display:flex;align-items:flex-start;gap:9px;padding:9px 10px;border-radius:8px;cursor:pointer;transition:all .12s;margin-bottom:1px;}
+.erow:hover{background:rgba(191,91,30,.07);}
+.erow.on{background:rgba(191,91,30,.11);border-left:2px solid var(--accent);padding-left:8px;}
+.eday{min-width:30px;text-align:center;}
+.ednum{font-family:'Lora',serif;font-size:19px;font-weight:700;color:var(--accent);line-height:1;}
+.edwd{font-size:8px;color:var(--muted);letter-spacing:.5px;}
+.emeta{flex:1;min-width:0;}
+.etitle{font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px;}
+.eprev{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.emood{font-size:14px;margin-top:2px;}
+.elist-empty{text-align:center;padding:36px 14px;color:var(--muted);}
+.elist-empty .ei{font-size:38px;opacity:.28;margin-bottom:8px;}
+.elist-empty p{font-size:12px;line-height:1.7;}
+.main-area{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;}
+.mtbar{display:flex;align-items:center;justify-content:space-between;padding:12px 28px;border-bottom:1px solid var(--line);background:var(--paper);flex-shrink:0;}
+.mtbar-l{display:flex;align-items:center;gap:9px;}
+.menu-btn{display:none;background:none;border:none;color:var(--muted);padding:4px;}
+.tb-date{font-size:12px;color:var(--muted);letter-spacing:.5px;}
+.mtbar-r{display:flex;gap:5px;}
+.tbtn{display:flex;align-items:center;gap:5px;background:none;border:1px solid var(--line);border-radius:7px;padding:6px 11px;font-size:12px;color:var(--muted);transition:all .15s;}
+.tbtn:hover{border-color:var(--accent);color:var(--accent);}
+.tbtn.sv{background:var(--blue);border-color:var(--blue);color:white;}
+.tbtn.sv:hover{background:#14489a;}
+.tbtn.dl:hover{border-color:var(--red);color:var(--red);}
+.ed-scroll{flex:1;overflow-y:auto;padding:38px 52px;}
+.ed-scroll::-webkit-scrollbar{width:5px;}
+.ed-scroll::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px;}
+.ed-inner{max-width:680px;margin:0 auto;}
+.ed-dr{display:flex;align-items:baseline;gap:14px;margin-bottom:6px;}
+.ed-giant{font-family:'Lora',serif;font-size:70px;font-weight:600;color:var(--accent);line-height:1;opacity:.11;user-select:none;}
+.ed-dfull{font-size:13px;color:var(--muted);letter-spacing:2px;font-weight:300;}
+.mood-row{display:flex;align-items:center;gap:6px;margin-bottom:12px;flex-wrap:wrap;}
+.ml{font-size:10px;color:var(--muted);letter-spacing:1px;margin-right:2px;}
+.mo{width:33px;height:33px;border-radius:50%;background:none;border:1.5px solid var(--line);font-size:16px;display:flex;align-items:center;justify-content:center;transition:all .15s;}
+.mo:hover{border-color:var(--accent);transform:scale(1.15);}
+.mo.on{border-color:var(--accent);background:rgba(191,91,30,.09);transform:scale(1.1);}
+.wx-row{display:flex;align-items:center;gap:5px;margin-bottom:10px;flex-wrap:wrap;}
+.wxb{background:none;border:1px solid var(--line);border-radius:15px;padding:3px 9px;font-size:11px;color:var(--muted);transition:all .15s;}
+.wxb:hover{border-color:#3a6080;color:#3a6080;}
+.wxb.on{border-color:#3a6080;background:rgba(58,96,128,.08);color:#3a6080;}
+.tags-row{display:flex;align-items:center;gap:5px;margin-bottom:20px;flex-wrap:wrap;}
+.tg{background:var(--paper2);border:1px solid var(--line);border-radius:15px;padding:3px 10px;font-size:11px;color:var(--muted);transition:all .15px;}
+.tg:hover,.tg.on{background:rgba(191,91,30,.09);border-color:var(--accent);color:var(--accent);}
+.tg-add{background:none;border:1px dashed var(--line);border-radius:15px;padding:3px 9px;font-size:11px;color:var(--muted);transition:all .15s;}
+.tg-add:hover{border-color:var(--accent);color:var(--accent);}
+.ed-title-in{width:100%;border:none;background:transparent;font-family:'Ma Shan Zheng',cursive;font-size:34px;color:var(--ink);outline:none;letter-spacing:3px;line-height:1.3;margin-bottom:16px;}
+.ed-title-in::placeholder{color:var(--line);}
+.ed-div{border:none;border-top:1px solid var(--line);margin:0 0 20px;position:relative;}
+.ed-div::after{content:'❧';position:absolute;left:50%;top:-10px;transform:translateX(-50%);background:var(--paper);padding:0 10px;color:rgba(191,91,30,.22);font-size:14px;}
+.ed-body{width:100%;min-height:280px;border:none;background:transparent;font-family:'Noto Serif SC',serif;font-size:15px;line-height:2.1;color:var(--ink);outline:none;resize:none;font-weight:300;letter-spacing:.3px;}
+.ed-body::placeholder{color:var(--line);}
+.fmtbar{display:flex;align-items:center;gap:3px;padding:9px 28px;border-top:1px solid var(--line);background:var(--paper);flex-shrink:0;flex-wrap:wrap;}
+.fb{background:none;border:none;padding:5px 7px;border-radius:4px;font-size:12px;color:var(--muted);transition:all .12s;}
+.fb:hover{background:var(--line);color:var(--ink);}
+.fsep{width:1px;height:15px;background:var(--line);margin:0 3px;}
+.wc{margin-left:auto;font-size:10px;color:var(--muted);}
+.welcome{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;text-align:center;color:var(--muted);}
+.welcome .wi{font-size:68px;opacity:.22;margin-bottom:18px;animation:float 4s ease-in-out infinite;}
+.welcome h3{font-family:'Ma Shan Zheng',cursive;font-size:24px;color:var(--ink);opacity:.32;letter-spacing:4px;margin-bottom:8px;}
+.welcome p{font-size:13px;line-height:1.8;font-weight:300;max-width:250px;opacity:.7;}
 @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
-.statsbar { display:flex;gap:18px;padding:9px 28px;border-top:1px solid var(--line);background:var(--paper2);flex-shrink:0;font-size:10px;color:var(--muted); }
-.sv2 { display:flex;align-items:center;gap:5px; }
-.svn { font-size:12px;font-weight:600;color:var(--accent); }
-
-/* Search overlay */
-.s-overlay { position:fixed;inset:0;background:rgba(24,18,10,.5);backdrop-filter:blur(4px);z-index:500;display:none;align-items:flex-start;justify-content:center;padding-top:13vh; }
-.s-overlay.on { display:flex; }
-.s-box { background:var(--paper);border-radius:16px;padding:22px;width:min(540px,92vw);box-shadow:0 24px 64px rgba(24,18,10,.22);animation:slideDown .2s ease; }
+.statsbar{display:flex;gap:18px;padding:9px 28px;border-top:1px solid var(--line);background:var(--paper2);flex-shrink:0;font-size:10px;color:var(--muted);}
+.sv2{display:flex;align-items:center;gap:5px;}
+.svn{font-size:12px;font-weight:600;color:var(--accent);}
+.s-overlay{position:fixed;inset:0;background:rgba(24,18,10,.5);backdrop-filter:blur(4px);z-index:500;display:none;align-items:flex-start;justify-content:center;padding-top:13vh;}
+.s-overlay.on{display:flex;}
+.s-box{background:var(--paper);border-radius:16px;padding:22px;width:min(540px,92vw);box-shadow:0 24px 64px rgba(24,18,10,.22);animation:slideDown .2s ease;}
 @keyframes slideDown{from{opacity:0;transform:translateY(-14px)}to{opacity:1;transform:translateY(0)}}
-.s-input { width:100%;border:none;border-bottom:2px solid var(--accent);background:transparent;font-family:inherit;font-size:20px;color:var(--ink);outline:none;padding:7px 0;letter-spacing:1px;margin-bottom:16px; }
-.s-res { max-height:270px;overflow-y:auto; }
-.s-item { padding:10px 11px;border-radius:8px;cursor:pointer;transition:background .12s;border-bottom:1px solid var(--line); }
-.s-item:last-child { border-bottom:none; }
-.s-item:hover { background:var(--paper2); }
-.s-item-t { font-size:14px;font-weight:500;margin-bottom:2px; }
-.s-item-d { font-size:11px;color:var(--muted); }
+.s-input{width:100%;border:none;border-bottom:2px solid var(--accent);background:transparent;font-family:inherit;font-size:20px;color:var(--ink);outline:none;padding:7px 0;letter-spacing:1px;margin-bottom:16px;}
+.s-res{max-height:270px;overflow-y:auto;}
+.s-item{padding:10px 11px;border-radius:8px;cursor:pointer;transition:background .12s;border-bottom:1px solid var(--line);}
+.s-item:last-child{border-bottom:none;}
+.s-item:hover{background:var(--paper2);}
+.s-item-t{font-size:14px;font-weight:500;margin-bottom:2px;}
+.s-item-d{font-size:11px;color:var(--muted);}
+.toast{position:fixed;bottom:22px;right:22px;background:var(--ink);color:var(--paper);padding:10px 17px;border-radius:8px;font-size:13px;z-index:9000;opacity:0;transform:translateY(7px);transition:all .24s;pointer-events:none;}
+.toast.on{opacity:1;transform:translateY(0);}
+.sb-bd{position:fixed;inset:0;background:rgba(24,18,10,.4);z-index:190;display:none;}
+.sb-bd.on{display:block;}
 
-/* Toast */
-.toast { position:fixed;bottom:22px;right:22px;background:var(--ink);color:var(--paper);padding:10px 17px;border-radius:8px;font-size:13px;z-index:9000;opacity:0;transform:translateY(7px);transition:all .24s;pointer-events:none; }
-.toast.on { opacity:1;transform:translateY(0); }
-
-/* Sidebar backdrop */
-.sb-bd { position:fixed;inset:0;background:rgba(24,18,10,.4);z-index:190;display:none; }
-.sb-bd.on { display:block; }
-
-/* Mobile */
 @media(max-width:720px){
-  .sidebar { position:fixed;left:0;top:0;bottom:0;z-index:200;transform:translateX(-100%);box-shadow:4px 0 20px var(--shadow); }
-  .sidebar.on { transform:translateX(0); }
-  .menu-btn { display:flex; }
-  .ed-scroll { padding:22px 16px; }
-  .mtbar { padding:10px 14px; }
-  .fmtbar { padding:8px 13px; }
-  .statsbar { padding:8px 14px;gap:12px; }
-  .ed-giant { font-size:42px; }
-  .ed-title-in { font-size:26px; }
-  .auth-card { padding:24px 20px 20px; }
-  .cfg-card { padding:24px 20px; }
+  .sidebar{position:fixed;left:0;top:0;bottom:0;z-index:200;transform:translateX(-100%);box-shadow:4px 0 20px var(--shadow);}
+  .sidebar.on{transform:translateX(0);}
+  .menu-btn{display:flex;}
+  .ed-scroll{padding:22px 16px;}
+  .mtbar{padding:10px 14px;}
+  .fmtbar{padding:8px 13px;}
+  .statsbar{padding:8px 14px;gap:12px;}
+  .ed-giant{font-size:42px;}
+  .ed-title-in{font-size:26px;}
+  .auth-card{padding:24px 20px 20px;}
+  .cfg-card{padding:24px 20px;}
 }
 </style>
 </head>
 <body>
 
-<!-- ══════════════════ CONFIG PAGE ══════════════════ -->
+<!-- CONFIG PAGE -->
 <div id="configPage" class="page">
   <div class="cfg-card">
-    <div class="cfg-title">☁️ 晴日记</div>
-    <div class="cfg-sub">需要先配置 Firebase 才能使用云端同步</div>
-
-    <div class="cfg-step">
-      <div class="cfg-num">1</div>
-      <div class="cfg-txt">
-        <strong>访问 Firebase 控制台</strong>
-        <p>打开 <code>console.firebase.google.com</code>，用 Google 账号登录，点「创建项目」</p>
-      </div>
-    </div>
-    <div class="cfg-step">
-      <div class="cfg-num">2</div>
-      <div class="cfg-txt">
-        <strong>项目名随意填，关闭 Google Analytics，创建项目</strong>
-      </div>
-    </div>
-    <div class="cfg-step">
-      <div class="cfg-num">3</div>
-      <div class="cfg-txt">
-        <strong>添加 Web 应用，获取配置代码</strong>
-        <p>进入项目 → 点「&lt;/&gt;」图标 → 注册应用 → 复制 <code>firebaseConfig</code> 里的内容</p>
-      </div>
-    </div>
-    <div class="cfg-step">
-      <div class="cfg-num">4</div>
-      <div class="cfg-txt">
-        <strong>开启 Authentication（邮箱登录）</strong>
-        <p>左侧菜单 → Authentication → Sign-in method → 启用「电子邮件/密码」</p>
-      </div>
-    </div>
-    <div class="cfg-step">
-      <div class="cfg-num">5</div>
-      <div class="cfg-txt">
-        <strong>开启 Firestore Database</strong>
-        <p>左侧菜单 → Firestore Database → 创建数据库 → 选「以测试模式启动」→ 选离你最近的地区</p>
-      </div>
-    </div>
-    <div class="cfg-step">
-      <div class="cfg-num">6</div>
-      <div class="cfg-txt">
-        <strong>把配置填入 index.html 并重新部署</strong>
-        <p>用文本编辑器打开 index.html，找到 <code>firebaseConfig</code>，把各字段的「请填写…」替换成你复制的真实值</p>
-      </div>
-    </div>
-
-    <div class="cfg-warn">
-      📋 详细图文教程已在另一个文件「Firebase配置教程.html」中，请打开查看
-    </div>
+    <div class="cfg-logo">晴日记</div>
+    <div class="cfg-sub">☁️ 需要配置 Supabase 才能使用云端同步</div>
+    <div class="cfg-step"><div class="cfg-num">1</div><div class="cfg-txt"><strong>访问 supabase.com，用 GitHub 或 Google 账号登录</strong><p>点右上角「Start your project」</p></div></div>
+    <div class="cfg-step"><div class="cfg-num">2</div><div class="cfg-txt"><strong>创建新项目，Region 选「Southeast Asia（Singapore）」</strong><p>新加坡节点，国内访问速度最快</p></div></div>
+    <div class="cfg-step"><div class="cfg-num">3</div><div class="cfg-txt"><strong>进入项目 → Settings → API，复制两个值</strong><p><code>Project URL</code> 和 <code>anon public</code> key</p></div></div>
+    <div class="cfg-step"><div class="cfg-num">4</div><div class="cfg-txt"><strong>在 SQL Editor 运行建表语句（教程里有）</strong></div></div>
+    <div class="cfg-step"><div class="cfg-num">5</div><div class="cfg-txt"><strong>把两个值填入 index.html 顶部，重新部署</strong></div></div>
+    <div class="cfg-note">📋 详细图文教程见「Supabase配置教程.html」</div>
   </div>
 </div>
 
-<!-- ══════════════════ AUTH PAGE ══════════════════ -->
+<!-- AUTH PAGE -->
 <div id="authPage" class="page">
   <div class="auth-brand">
     <div class="auth-logo">晴日记</div>
     <div class="auth-tagline">MY PRIVATE JOURNAL</div>
     <div class="auth-deco"></div>
-    <div class="auth-cloud">☁️ 云端同步 · 多设备可用</div>
+    <div class="auth-cloud">☁️ 云端同步 · 无需VPN · 多设备可用</div>
   </div>
-
   <div class="auth-card">
     <div class="auth-tabs">
       <button class="auth-tab on" onclick="switchTab('login')">登 录</button>
       <button class="auth-tab" onclick="switchTab('register')">注 册</button>
     </div>
     <div id="authMsg" class="auth-msg"></div>
-
     <!-- 登录 -->
     <div id="fLogin">
-      <div class="field">
-        <label>邮箱</label>
-        <div class="fw">
-          <span class="fi">📧</span>
-          <input type="email" id="lEmail" placeholder="请输入注册邮箱" autocomplete="email">
-        </div>
-      </div>
-      <div class="field">
-        <label>密码</label>
-        <div class="fw">
-          <span class="fi">🔒</span>
-          <input type="password" id="lPw" placeholder="请输入密码" autocomplete="current-password">
-          <button class="eye-btn" type="button" onclick="eyeToggle('lPw',this)">👁</button>
-        </div>
-      </div>
+      <div class="field"><label>邮箱</label><div class="fw"><span class="fi">📧</span><input type="email" id="lEmail" placeholder="请输入注册邮箱" autocomplete="email"></div></div>
+      <div class="field"><label>密码</label><div class="fw"><span class="fi">🔒</span><input type="password" id="lPw" placeholder="请输入密码" autocomplete="current-password"><button class="eye-btn" type="button" onclick="eyeToggle('lPw',this)">👁</button></div></div>
       <button class="btn-auth" id="btnLogin" onclick="doLogin()">登 录</button>
     </div>
-
     <!-- 注册 -->
     <div id="fReg" style="display:none">
-      <div class="field">
-        <label>昵称</label>
-        <div class="fw">
-          <span class="fi">👤</span>
-          <input type="text" id="rNick" placeholder="你的显示名字">
-        </div>
-      </div>
-      <div class="field">
-        <label>邮箱</label>
-        <div class="fw">
-          <span class="fi">📧</span>
-          <input type="email" id="rEmail" placeholder="请输入邮箱" autocomplete="email">
-        </div>
-      </div>
-      <div class="field">
-        <label>密码</label>
-        <div class="fw">
-          <span class="fi">🔒</span>
-          <input type="password" id="rPw" placeholder="至少6位" oninput="pwStrength(this.value)">
-          <button class="eye-btn" type="button" onclick="eyeToggle('rPw',this)">👁</button>
-        </div>
-        <div class="pw-bar" id="pwBar"><span></span><span></span><span></span><span></span></div>
-      </div>
-      <div class="field">
-        <label>确认密码</label>
-        <div class="fw">
-          <span class="fi">🔑</span>
-          <input type="password" id="rPw2" placeholder="再次输入密码">
-          <button class="eye-btn" type="button" onclick="eyeToggle('rPw2',this)">👁</button>
-        </div>
-      </div>
+      <div class="field"><label>昵称</label><div class="fw"><span class="fi">👤</span><input type="text" id="rNick" placeholder="你的显示名字"></div></div>
+      <div class="field"><label>邮箱</label><div class="fw"><span class="fi">📧</span><input type="email" id="rEmail" placeholder="请输入邮箱" autocomplete="email"></div></div>
+      <div class="field"><label>密码</label><div class="fw"><span class="fi">🔒</span><input type="password" id="rPw" placeholder="至少6位" oninput="pwStrength(this.value)"><button class="eye-btn" type="button" onclick="eyeToggle('rPw',this)">👁</button></div><div class="pw-bar" id="pwBar"><span></span><span></span><span></span><span></span></div></div>
+      <div class="field"><label>确认密码</label><div class="fw"><span class="fi">🔑</span><input type="password" id="rPw2" placeholder="再次输入密码"><button class="eye-btn" type="button" onclick="eyeToggle('rPw2',this)">👁</button></div></div>
       <button class="btn-auth" id="btnReg" onclick="doRegister()">创建账号</button>
     </div>
-
-    <div class="auth-note">
-      账号和数据均存储在 Firebase 云端<br>
-      <span style="opacity:.55">换设备登录，数据自动同步</span>
-    </div>
+    <div class="auth-note">账号和数据均存储在 Supabase 云端<br><span style="opacity:.55">国内可直连，无需VPN</span></div>
   </div>
 </div>
 
-<!-- ══════════════════ APP PAGE ══════════════════ -->
+<!-- APP PAGE -->
 <div id="appPage" class="page">
   <div class="sb-bd" id="sbBd" onclick="sidebarClose()"></div>
-
   <aside class="sidebar" id="sidebar">
     <div class="sb-top">
       <div class="sb-brand-row">
-        <div>
-          <div class="brand-txt">晴日记</div>
-          <div class="sync-badge">☁️ 云端同步</div>
-        </div>
+        <div><div class="brand-txt">晴日记</div><div class="sync-badge">☁️ 云端同步</div></div>
         <div class="user-pill" onclick="toggleDrop(event)">
           <div class="u-ava" id="uAva"></div>
           <div class="u-name" id="uName"></div>
@@ -978,86 +681,62 @@ input, textarea { font-family:inherit; }
         </div>
       </div>
       <button class="btn-new" onclick="newEntry()">
-        <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6.5 1.5v10M1.5 6.5h10"/></svg>
-        新建日记
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6.5 1.5v10M1.5 6.5h10"/></svg>新建日记
       </button>
     </div>
-
     <div class="mini-cal">
-      <div class="cal-hd">
-        <button class="cal-nav" onclick="calPrev()">‹</button>
-        <div class="cal-lbl" id="calLbl"></div>
-        <button class="cal-nav" onclick="calNext()">›</button>
-      </div>
+      <div class="cal-hd"><button class="cal-nav" onclick="calPrev()">‹</button><div class="cal-lbl" id="calLbl"></div><button class="cal-nav" onclick="calNext()">›</button></div>
       <div class="cal-grid" id="calGrid"></div>
     </div>
-
     <div class="elist" id="eList"></div>
   </aside>
 
   <div class="main-area">
     <div class="mtbar">
       <div class="mtbar-l">
-        <button class="menu-btn" onclick="sidebarToggle()">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-            <path d="M3 5h14M3 10h14M3 15h14"/>
-          </svg>
-        </button>
+        <button class="menu-btn" onclick="sidebarToggle()"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 5h14M3 10h14M3 15h14"/></svg></button>
         <div class="tb-date" id="tbDate"></div>
       </div>
-      <div class="mtbar-r" id="tbR">
-        <button class="tbtn" onclick="openSearch()">🔍 搜索</button>
-      </div>
+      <div class="mtbar-r" id="tbR"><button class="tbtn" onclick="openSearch()">🔍 搜索</button></div>
     </div>
-
     <div class="welcome" id="welcomeV">
       <div class="wi">✍️</div>
       <h3>开始记录今天</h3>
-      <p>数据实时同步云端<br>任何设备都能看到<br>点击「新建日记」开始</p>
+      <p>数据实时同步云端<br>手机电脑都能看到<br>国内直连，无需VPN</p>
     </div>
-
     <div id="edV" style="display:none;flex:1;flex-direction:column;overflow:hidden;">
-      <div class="ed-scroll">
-        <div class="ed-inner">
-          <div class="ed-dr">
-            <div class="ed-giant" id="edGiant"></div>
-            <div class="ed-dfull" id="edFull"></div>
-          </div>
-          <div class="mood-row">
-            <span class="ml">心情</span>
-            <button class="mo" data-m="😊" onclick="setMood(this)">😊</button>
-            <button class="mo" data-m="😌" onclick="setMood(this)">😌</button>
-            <button class="mo" data-m="🥰" onclick="setMood(this)">🥰</button>
-            <button class="mo" data-m="😔" onclick="setMood(this)">😔</button>
-            <button class="mo" data-m="😤" onclick="setMood(this)">😤</button>
-            <button class="mo" data-m="😴" onclick="setMood(this)">😴</button>
-            <button class="mo" data-m="😰" onclick="setMood(this)">😰</button>
-            <button class="mo" data-m="🤔" onclick="setMood(this)">🤔</button>
-          </div>
-          <div class="wx-row">
-            <span class="ml">天气</span>
-            <button class="wxb" data-w="☀️" onclick="setWx(this)">☀️ 晴</button>
-            <button class="wxb" data-w="⛅" onclick="setWx(this)">⛅ 多云</button>
-            <button class="wxb" data-w="🌧️" onclick="setWx(this)">🌧️ 雨</button>
-            <button class="wxb" data-w="❄️" onclick="setWx(this)">❄️ 雪</button>
-            <button class="wxb" data-w="🌫️" onclick="setWx(this)">🌫️ 阴</button>
-          </div>
-          <div class="tags-row" id="tagsRow">
-            <button class="tg" data-t="工作" onclick="toggleTag(this)">💼 工作</button>
-            <button class="tg" data-t="生活" onclick="toggleTag(this)">🌿 生活</button>
-            <button class="tg" data-t="旅行" onclick="toggleTag(this)">✈️ 旅行</button>
-            <button class="tg" data-t="家人" onclick="toggleTag(this)">👨‍👩‍👧 家人</button>
-            <button class="tg" data-t="健康" onclick="toggleTag(this)">💪 健康</button>
-            <button class="tg" data-t="读书" onclick="toggleTag(this)">📚 读书</button>
-            <button class="tg-add" onclick="addTag()">＋ 标签</button>
-          </div>
-          <input type="text" class="ed-title-in" id="edTitle" placeholder="今天的标题…" oninput="autoSave()">
-          <hr class="ed-div">
-          <textarea class="ed-body" id="edBody"
-            placeholder="今天，发生了…&#10;&#10;写下此刻的心情，让每一天都留下痕迹。"
-            oninput="autoSave()"></textarea>
+      <div class="ed-scroll"><div class="ed-inner">
+        <div class="ed-dr"><div class="ed-giant" id="edGiant"></div><div class="ed-dfull" id="edFull"></div></div>
+        <div class="mood-row"><span class="ml">心情</span>
+          <button class="mo" data-m="😊" onclick="setMood(this)">😊</button>
+          <button class="mo" data-m="😌" onclick="setMood(this)">😌</button>
+          <button class="mo" data-m="🥰" onclick="setMood(this)">🥰</button>
+          <button class="mo" data-m="😔" onclick="setMood(this)">😔</button>
+          <button class="mo" data-m="😤" onclick="setMood(this)">😤</button>
+          <button class="mo" data-m="😴" onclick="setMood(this)">😴</button>
+          <button class="mo" data-m="😰" onclick="setMood(this)">😰</button>
+          <button class="mo" data-m="🤔" onclick="setMood(this)">🤔</button>
         </div>
-      </div>
+        <div class="wx-row"><span class="ml">天气</span>
+          <button class="wxb" data-w="☀️" onclick="setWx(this)">☀️ 晴</button>
+          <button class="wxb" data-w="⛅" onclick="setWx(this)">⛅ 多云</button>
+          <button class="wxb" data-w="🌧️" onclick="setWx(this)">🌧️ 雨</button>
+          <button class="wxb" data-w="❄️" onclick="setWx(this)">❄️ 雪</button>
+          <button class="wxb" data-w="🌫️" onclick="setWx(this)">🌫️ 阴</button>
+        </div>
+        <div class="tags-row" id="tagsRow">
+          <button class="tg" data-t="工作" onclick="toggleTag(this)">💼 工作</button>
+          <button class="tg" data-t="生活" onclick="toggleTag(this)">🌿 生活</button>
+          <button class="tg" data-t="旅行" onclick="toggleTag(this)">✈️ 旅行</button>
+          <button class="tg" data-t="家人" onclick="toggleTag(this)">👨‍👩‍👧 家人</button>
+          <button class="tg" data-t="健康" onclick="toggleTag(this)">💪 健康</button>
+          <button class="tg" data-t="读书" onclick="toggleTag(this)">📚 读书</button>
+          <button class="tg-add" onclick="addTag()">＋ 标签</button>
+        </div>
+        <input type="text" class="ed-title-in" id="edTitle" placeholder="今天的标题…" oninput="autoSave()">
+        <hr class="ed-div">
+        <textarea class="ed-body" id="edBody" placeholder="今天，发生了…&#10;&#10;写下此刻的心情，让每一天都留下痕迹。" oninput="autoSave()"></textarea>
+      </div></div>
       <div class="fmtbar">
         <button class="fb" onclick="fw('**','**')"><b>B</b></button>
         <button class="fb" onclick="fw('*','*')"><i>I</i></button>
@@ -1073,7 +752,6 @@ input, textarea { font-family:inherit; }
         <div class="wc" id="wcEl">0 字</div>
       </div>
     </div>
-
     <div class="statsbar">
       <div class="sv2">📝 共 <span class="svn" id="stN">0</span> 篇</div>
       <div class="sv2">🔥 连续 <span class="svn" id="stS">0</span> 天</div>
@@ -1082,16 +760,12 @@ input, textarea { font-family:inherit; }
   </div>
 </div>
 
-<!-- Search -->
 <div class="s-overlay" id="sOver" onclick="sOverClose(event)">
   <div class="s-box">
     <input class="s-input" id="sQ" placeholder="搜索日记…" oninput="doSearch()">
     <div class="s-res" id="sRes"></div>
   </div>
 </div>
-
-<!-- Toast -->
 <div class="toast" id="toast"></div>
-
 </body>
 </html>
