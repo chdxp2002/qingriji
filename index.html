@@ -168,9 +168,16 @@ async function loadAllEntries() {
     .select('*')
     .eq('user_id', CU.id)
     .order('date', { ascending: false });
-  if (error) { showToast('加载失败，请刷新重试'); return; }
+  if (error) { showToast('加载失败：' + (error?.message || '请刷新重试')); console.error('loadAllEntries error:', error); return; }
   entries = {};
-  (data || []).forEach(row => { entries[row.id] = row; });
+  (data || []).forEach(row => {
+    // tags 可能是字符串（JSON）或数组，统一转为数组
+    if (typeof row.tags === 'string') {
+      try { row.tags = JSON.parse(row.tags); } catch(e) { row.tags = []; }
+    }
+    if (!Array.isArray(row.tags)) row.tags = [];
+    entries[row.id] = row;
+  });
   renderList(); renderCal(); updateStats();
   // 自动打开最新一篇
   const sorted = Object.values(entries).sort((a,b)=>b.updated_at?.localeCompare(a.updated_at));
@@ -179,18 +186,29 @@ async function loadAllEntries() {
 
 async function saveEntryCloud(entry) {
   const payload = {
-    id:        entry.id,
-    user_id:   CU.id,
-    date:      entry.date,
-    title:     entry.title   || '',
-    content:   entry.content || '',
-    mood:      entry.mood    || '',
-    weather:   entry.weather || '',
-    tags:      entry.tags    || [],
+    id:         entry.id,
+    user_id:    CU.id,
+    date:       entry.date,
+    title:      entry.title   || '',
+    content:    entry.content || '',
+    mood:       entry.mood    || '',
+    weather:    entry.weather || '',
+    tags:       JSON.stringify(entry.tags || []),  // 存为JSON字符串，避免数组类型兼容问题
     updated_at: new Date().toISOString(),
   };
-  const { error } = await sb.from('entries').upsert(payload, { onConflict: 'id' });
-  if (error) throw error;
+  // 先尝试 update，如果没有记录（0行）再 insert
+  const { data: upData, error: upErr } = await sb
+    .from('entries')
+    .update(payload)
+    .eq('id', entry.id)
+    .eq('user_id', CU.id)
+    .select('id');
+  if (upErr) throw upErr;
+  if (!upData || upData.length === 0) {
+    // 记录不存在，insert
+    const { error: insErr } = await sb.from('entries').insert(payload);
+    if (insErr) throw insErr;
+  }
 }
 
 async function deleteEntryCloud(id) {
@@ -351,7 +369,8 @@ function scheduleAutoSave() {
     } catch(e) {
       const b=document.getElementById('svBtn');
       if(b) b.textContent='⚠️ 同步失败';
-      showToast('保存失败，请检查网络');
+      showToast('保存失败：' + (e?.message || '请检查网络'));
+      console.error('saveEntryCloud error:', e);
     }
   }, 800);
 }
